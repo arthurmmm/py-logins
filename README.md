@@ -35,9 +35,10 @@ def login(username, password, captcha, session=None):
 Test Case:
 
 ```bash
-python -m unittest bilibili_login.TestCases.getlogin
 # Get a login cookie json file on /var/tmp/bilibili.login
+# Need supply username, password, path to store captcha and the captcha code.
+python -m unittest bilibili_login.TestCases.getlogin
 
-python -m unittest bilibili_login.TestCases.uselogin
 # Use login cookie json file to verify
+python -m unittest bilibili_login.TestCases.uselogin
 ```
