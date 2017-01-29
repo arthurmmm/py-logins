@@ -2,10 +2,8 @@
 This project contains serveral python packages which could simulate a website login, but need input captcha manually.
 
 Requirements:
--  requests
--  rsa
--  base64
--  json
+-  requests==2.13.0
+-  rsa==3.4.2
 
 Each package would contain below functions
 
