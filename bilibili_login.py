@@ -6,62 +6,58 @@ __date__ = '2017-01-29'
 
 import os
 import requests
+import unittest
 from requests.utils import dict_from_cookiejar
 import rsa
-import json
 import base64
 from getpass import getpass
+import logging
 
-def testLogin(cookies=None, cookies_file=None):
-    ''' Access a page that require a login status to validate if we login successfully.
-    cookies: cookies dict
-    cookies_file: a file that contains cookie dict, with JSON format.
+def prepare(captcha_file=None):
+    ''' Get captcha and store in captcha_file
+    captcha_file: path to store captcha image
     
-    return: test result (true/false)
+    return: session with cookies
     '''
-    return False
+    session = requests.Session()
+    session.get('https://passport.bilibili.com/ajax/miniLogin/minilogin')
+    
+    res = session.get('https://passport.bilibili.com/captcha')
+    with open(captcha_file, 'wb') as f:
+        f.write(res.content)
+    logging.debug('Captcha image has been store on: %s' % captcha_file)
+    return session
+    
 
-def login(username, password, captcha_file=None, cookies_file=None):
+def login(username, password, captcha, session=None):
     ''' Perform login with given arguments
     username: Your username
     password: Your password
-    captcha_file: Path to store captcha image
-    cookies_file: Path to persist cookies dict. Optional.
+    captcha: Your captcha code. Should run prepare first to get captcha
+    session: session with cookies
     
     return: cookies dict or None.
     '''
     
-    # step0 - start session for cookies
-    session = requests.Session()
-    session.get('https://passport.bilibili.com/ajax/miniLogin/minilogin')
+    if session == None:
+        session = requests.Session()
     
-    # step1 - get captcha
-    while True:
-        res = session.get('https://passport.bilibili.com/captcha')
-        with open('/root/git/nginx-sh1/html/captcha.png', 'wb') as f:
-            f.write(res.content)
-        captcha = input('Please type captcha, type "retry" if need refresh: ')
-        if captcha == 'retry':
-            continue
-        else:
-            break
-        
-    # step2 - get HASH and RSA pubkey
-    print('get HASH and RSA pubkey')
+    # get HASH and RSA pubkey
+    logging.debug('get HASH and RSA pubkey')
     res = session.get('https://passport.bilibili.com/login?act=getkey')
     hash, pubkey = res.json()['hash'], res.json()['key']
-    print('hash: %s, pubkey: %s' % (hash, pubkey))
+    logging.debug('hash: %s, pubkey: %s' % (hash, pubkey))
     
-    # step3 - encrypt password (RSA+base64)
+    # encrypt password (RSA+base64)
     pwd = hash + password
     pwd = pwd.encode('utf-8')
     pubkey = rsa.PublicKey.load_pkcs1_openssl_pem(pubkey.encode('utf-8'))
     pwd = rsa.encrypt(pwd, pubkey)
-    print('pwd[RSA]: %s' % (pwd))
+    logging.debug('pwd[RSA]: %s' % (pwd))
     pwd = base64.b64encode(pwd)
-    print('pwd[BASE64]: %s' % (pwd))
+    logging.debug('pwd[BASE64]: %s' % (pwd))
     
-    # step4 - login
+    # perform login
     res = session.post('https://passport.bilibili.com/ajax/miniLogin/login', data={
         'userid': username,
         'pwd': pwd,
@@ -70,24 +66,82 @@ def login(username, password, captcha_file=None, cookies_file=None):
     })
     res = res.json()
     if res['status']:
-        url = res['data']['crossDomain']
+        logging.debug(res)
     else:
-        print('Login Failed! status: %s, reason: %s')
+        ERROR_MAP = {
+            "-105": "验证码错误",
+            "-618": "昵称重复或含有非法字符",
+            "-619": "昵称不能小于3个字符或者大于30个字符",
+            "-620": "该昵称已被使用",
+            "-622": "Email已存在",
+            "-625": "密码错误次数过多",
+            "-626": "用户不存在",
+            "-627": "密码错误",
+            "-628": "密码不能小于6个字符或大于16个字符",
+            "-636": "系统繁忙，稍后再试",
+            "-645": "昵称或密码过短",
+            "-646": "请输入正确的手机号",
+            "-647": "该手机已绑定另外一个账号",
+            "-648": "验证码发送失败",
+            "-652": "历史遗留问题，昵称与手机号重复，请联系管理员",
+            "-662": "加密后的密码已过期"
+        }
+        logging.error(str(res))
+        logging.error(ERROR_MAP[str(res['message']['code'])])
+        return None
     
-    print(res.text)
     cookie = dict_from_cookiejar(session.cookies)
-    print(cookie)
-    with open('/var/tmp/cookies.json', 'w') as f:
-        f.write(json.dumps(cookie))
+    session.close()
+    return cookie
+    
 
-def main():
-    username = input('Username: ')
-    password = getpass('Password: ')
-    cookies = login(username, password, '/var/tmp/bilibili_login.json')
-    if testLogin(cookie_file='/var/tmp/bilibili_login.json'):
-        print('Login Test pass')
-    else:
-        print('Login Test failed')
+class TestCases(unittest.TestCase):
+    def getlogin(self):
+        logging.basicConfig(level=logging.DEBUG)
+        captcha_file = input('Path to store captcha image: ')
+        session = None
+        captcha = None
+        while True:
+            session = prepare(captcha_file)
+            captcha = input('Please type captcha(type "retry" to refresh): ')
+            if captcha == 'retry':
+                session.close()
+                continue
+            else:
+                break
         
-if __name__ = '__main__':
-    main()
+        username = input('Username: ')
+        password = getpass('Password: ')
+        cookies = login(
+            username, 
+            password, 
+            captcha,
+            session = session
+        )
+        if cookies:
+            logging.info('Success')
+            import json
+            with open('/var/tmp/bilibili.login', 'w') as f:
+                f.write(json.dumps(cookies))
+            logging.info('Cookie file has been stored on /var/tmp/bilibili.login')
+            logging.info('Use test case "uselogin" and supply this file to verify.')
+        else:
+            logging.error('Failed')
+        
+    def uselogin(self):
+        logging.basicConfig(level=logging.DEBUG)
+        cookie_file = input('Cookie file path: ')
+        import json
+        with open(cookie_file, 'r') as f:
+            cookies = json.loads(f.read())
+        res = requests.get('http://space.bilibili.com/', cookies=cookies)
+        import re
+        regex = re.search('<title>(.+)的个人空间', res.text)
+        if regex:
+            username = regex.group(1)
+            logging.info('success, login user: %s' % username)
+        else:
+            logging.error(res.text)
+        
+if __name__ == '__main__':
+    unittest.main()
