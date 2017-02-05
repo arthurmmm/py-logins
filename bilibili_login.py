@@ -23,10 +23,11 @@ def prepare(captcha_file=None):
     session.get('https://passport.bilibili.com/ajax/miniLogin/minilogin')
     
     res = session.get('https://passport.bilibili.com/captcha')
-    with open(captcha_file, 'wb') as f:
-        f.write(res.content)
-    logging.debug('Captcha image has been store on: %s' % captcha_file)
-    return session
+    if captcha_file:
+        with open(captcha_file, 'wb') as f:
+            f.write(res.content)
+        logging.debug('Captcha image has been store on: %s' % captcha_file)
+    return session, res.content
     
 
 def login(username, password, captcha, session=None):
@@ -88,7 +89,8 @@ def login(username, password, captcha, session=None):
         }
         logging.error(str(res))
         logging.error(ERROR_MAP[str(res['message']['code'])])
-        return None
+        res['message']['reason'] = ERROR_MAP[str(res['message']['code'])]
+        return res
     
     cookie = dict_from_cookiejar(session.cookies)
     session.close()
@@ -102,7 +104,7 @@ class TestCases(unittest.TestCase):
         session = None
         captcha = None
         while True:
-            session = prepare(captcha_file)
+            session, img = prepare(captcha_file)
             captcha = input('Please type captcha(type "retry" to refresh): ')
             if captcha == 'retry':
                 session.close()
